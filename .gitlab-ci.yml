@@ -58,7 +58,7 @@ build-apk:
     - echo "GOOGLE_MAPS_API_KEY=dummy_key_for_ci" > .env
     - cd android
     - chmod +x gradlew
-
+ 
     # Clean build
     - ./gradlew clean
 
