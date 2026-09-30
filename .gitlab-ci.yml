@@ -10,7 +10,7 @@ build-apk:
   stage: build
 
   before_script:
-    - export PATH="$JAVA_HOME/bin:$PATH"
+    - if [ -d "$JAVA_HOME" ]; then export PATH="$JAVA_HOME/bin:$PATH"; fi
 
     # Create local temp directory
     - mkdir -p "$TMPDIR"
@@ -19,12 +19,30 @@ build-apk:
     - rm -rf /tmp/metro-cache || true
     - rm -rf "$TMPDIR/metro-cache" || true
 
-    # Recreate keystore
-    - echo "$ANDROID_KEYSTORE" | tr -d '\n\r' | base64 -d > android/app/gigpay-release-key.keystore
+    # Recreate keystore and signing configuration
+    - |
+      KEYSTORE_DATA="${KEYSTORE_BASE64:-$ANDROID_KEYSTORE}"
+      if [ -n "$KEYSTORE_DATA" ]; then
+        mkdir -p android/app
+        echo "$KEYSTORE_DATA" | tr -d '\n\r' | base64 -d > android/app/gigpay-release-key.keystore
+        printf "storeFile=gigpay-release-key.keystore\nkeyAlias=%s\nstorePassword=%s\nkeyPassword=%s\n" \
+          "$KEY_ALIAS" "$KEYSTORE_PASSWORD" "${KEY_PASSWORD:-$KEYSTORE_PASSWORD}" > android/key.properties
+        export MYAPP_UPLOAD_STORE_FILE="gigpay-release-key.keystore"
+        export MYAPP_UPLOAD_KEY_ALIAS="$KEY_ALIAS"
+        export MYAPP_UPLOAD_STORE_PASSWORD="$KEYSTORE_PASSWORD"
+        export MYAPP_UPLOAD_KEY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+      fi
 
     # Recreate Firebase Service Account
-    - echo "$FIREBASE_SERVICE_ACCOUNT" | tr -d '\n\r' | base64 -d > firebase-service-account.json
-    - export GOOGLE_APPLICATION_CREDENTIALS=$(pwd)/firebase-service-account.json
+    - |
+      if [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
+        if echo "$FIREBASE_SERVICE_ACCOUNT" | grep -q '^{'; then
+          echo "$FIREBASE_SERVICE_ACCOUNT" > "$CI_PROJECT_DIR/firebase-service-account.json"
+        else
+          echo "$FIREBASE_SERVICE_ACCOUNT" | tr -d '\n\r' | base64 -d > "$CI_PROJECT_DIR/firebase-service-account.json"
+        fi
+        export GOOGLE_APPLICATION_CREDENTIALS="$CI_PROJECT_DIR/firebase-service-account.json"
+      fi
 
     # Debug info
     - whoami
@@ -45,8 +63,22 @@ build-apk:
     # Build
     - ./gradlew assembleRelease --refresh-dependencies --stacktrace
 
-    # Upload APK
-    - firebase appdistribution:distribute app/build/outputs/apk/release/app-release.apk --app "$FIREBASE_APP_ID" --groups "test" --release-notes "$CI_COMMIT_MESSAGE"
+    # Distribute APK to Firebase App Distribution
+    - |
+      if [ -n "$FIREBASE_APP_ID" ]; then
+        command -v firebase >/dev/null 2>&1 || npm install -g firebase-tools
+        EXTRA_ARGS=""
+        if [ -n "$FIREBASE_TOKEN" ]; then
+          EXTRA_ARGS="--token $FIREBASE_TOKEN"
+        fi
+        firebase appdistribution:distribute app/build/outputs/apk/release/app-release.apk \
+          --app "$FIREBASE_APP_ID" \
+          --groups "test" \
+          --release-notes "${CI_COMMIT_MESSAGE:-CI Build}" \
+          $EXTRA_ARGS
+      else
+        echo "FIREBASE_APP_ID is not configured, skipping Firebase distribution."
+      fi
 
   artifacts:
     expire_in: 7 days
