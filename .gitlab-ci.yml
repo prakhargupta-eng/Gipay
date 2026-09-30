@@ -1,0 +1,55 @@
+stages:
+  - build
+
+variables:
+  GIT_DEPTH: "0"
+  JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-amd64"
+  TMPDIR: "$CI_PROJECT_DIR/tmp"
+
+build-apk:
+  stage: build
+
+  before_script:
+    - export PATH="$JAVA_HOME/bin:$PATH"
+
+    # Create local temp directory
+    - mkdir -p "$TMPDIR"
+
+    # Clean Metro cache
+    - rm -rf /tmp/metro-cache || true
+    - rm -rf "$TMPDIR/metro-cache" || true
+
+    # Recreate keystore
+    - echo "$ANDROID_KEYSTORE" | tr -d '\n\r' | base64 -d > android/app/gigpay-release-key.keystore
+
+    # Recreate Firebase Service Account
+    - echo "$FIREBASE_SERVICE_ACCOUNT" | tr -d '\n\r' | base64 -d > firebase-service-account.json
+    - export GOOGLE_APPLICATION_CREDENTIALS=$(pwd)/firebase-service-account.json
+
+    # Debug info
+    - whoami
+    - node --version
+    - npm --version
+    - java -version
+    - yarn --version
+
+  script:
+    - yarn install --ignore-engines
+    - echo "GOOGLE_MAPS_API_KEY=dummy_key_for_ci" > .env
+    - cd android
+    - chmod +x gradlew
+
+    # Clean build
+    - ./gradlew clean
+
+    # Build
+    - ./gradlew assembleRelease --refresh-dependencies --stacktrace
+
+    # Upload APK
+    - firebase appdistribution:distribute app/build/outputs/apk/release/app-release.apk --app "$FIREBASE_APP_ID" --groups "test" --release-notes "$CI_COMMIT_MESSAGE"
+
+  artifacts:
+    expire_in: 7 days
+    paths:
+      - android/app/build/outputs/apk/release/*.apk
+      

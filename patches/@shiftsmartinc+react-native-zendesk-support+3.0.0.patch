@@ -1,0 +1,22 @@
+diff --git a/node_modules/@shiftsmartinc/react-native-zendesk-support/android/build.gradle b/node_modules/@shiftsmartinc/react-native-zendesk-support/android/build.gradle
+index 53c4c07..f715db5 100644
+--- a/node_modules/@shiftsmartinc/react-native-zendesk-support/android/build.gradle
++++ b/node_modules/@shiftsmartinc/react-native-zendesk-support/android/build.gradle
+@@ -45,16 +45,7 @@ android {
+ 
+ repositories {
+     mavenLocal()
+-    exclusiveContent {
+-        filter {
+-            includeGroup "com.facebook.react"
+-        }
+-        forRepository {
+-            maven {
+-                url "$rootDir/../node_modules/react-native/android"
+-            }
+-        }
+-    }
++    
+     maven {
+         // Android JSC is installed from npm
+         url "$rootDir/../node_modules/jsc-android/dist"

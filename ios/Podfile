@@ -1,0 +1,76 @@
+source 'https://cdn.cocoapods.org/'
+source 'https://github.com/SumSubstance/Specs.git'
+
+require_relative '../node_modules/react-native-permissions/scripts/setup.rb'
+setup_permissions([
+  'LocationWhenInUse',
+])
+
+# Resolve react_native_pods.rb with node to allow for hoisting
+require Pod::Executable.execute_command('node', ['-p',
+  'require.resolve(
+    "react-native/scripts/react_native_pods.rb",
+    {paths: [process.argv[1]]},
+  )', __dir__]).strip
+
+platform :ios, '18.0'
+use_modular_headers!
+
+# Enabling New Architecture (React Native 0.76+ requires this for many C++ dependencies)
+# Note: Old modules like Zendesk SDK will automatically use the New Architecture Interop Layer
+ENV['RCT_NEW_ARCH_ENABLED'] = '1'
+
+prepare_react_native_project!
+
+linkage = ENV['USE_FRAMEWORKS']
+if linkage != nil
+  Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
+  use_frameworks! :linkage => linkage.to_sym
+end
+
+target 'GigPay' do
+  config = use_native_modules!
+
+  use_react_native!(
+    :path => config[:reactNativePath],
+    # An absolute path to your application root.
+    :app_path => "#{Pod::Config.instance.installation_root}/.."
+  )
+
+  # Google Maps SDK for react-native-maps
+  rn_maps_path = '../node_modules/react-native-maps'
+  pod 'react-native-maps/Google', :path => rn_maps_path
+
+  # react-native-config
+  pod 'react-native-config/Extension', :path => '../node_modules/react-native-config'
+
+
+
+  post_install do |installer|
+    react_native_post_install(
+      installer,
+      config[:reactNativePath],
+      :mac_catalyst_enabled => false,
+      # :ccache_enabled => true
+    )
+    
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+      end
+    end
+  end
+end
+
+post_integrate do |installer|
+  # Fix for PrivacyInfo.xcprivacy 'Multiple commands produce' error
+  # This prevents CocoaPods from causing an output conflict with the app's PrivacyInfo.xcprivacy
+  Dir.glob("Pods/Target Support Files/Pods-GigPay/Pods-GigPay-resources-*-output-files.xcfilelist").each do |file_path|
+    if File.exist?(file_path)
+      content = File.read(file_path)
+      content = content.gsub(/.*PrivacyInfo\.xcprivacy.*\n?/, '')
+      File.write(file_path, content)
+    end
+  end
+end
+

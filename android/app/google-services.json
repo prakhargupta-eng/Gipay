@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "638019750272",
+    "project_id": "gigpay-5dc4c",
+    "storage_bucket": "gigpay-5dc4c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:638019750272:android:4925dc1a73a47c86fb1965",
+        "android_client_info": {
+          "package_name": "com.gigpay"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDkofad68QgTj0otHi34Y9XfzOsAYyGBsA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,52 @@
+buildscript {
+    ext {
+        buildToolsVersion = "36.0.0"
+        minSdkVersion = 29
+        compileSdkVersion = 36
+        targetSdkVersion = 36
+        ndkVersion = "27.1.12297006"
+        kotlinVersion = "2.1.20"
+    }
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://central.sonatype.com/repository/maven-snapshots/' }
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle")
+        classpath("com.facebook.react:react-native-gradle-plugin")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+        classpath("com.google.gms:google-services:4.4.2")
+        classpath("com.google.firebase:firebase-crashlytics-gradle:3.0.3")
+        classpath("com.google.firebase:perf-plugin:1.4.2")
+    }
+}
+
+allprojects {
+    repositories {
+        maven {
+            url "${project.rootDir}/local-maven-repo"
+        }
+        google()
+        mavenCentral()
+        maven {
+            url "https://maven.sumsub.com/repository/maven-public/"
+        }
+        maven {
+            url 'https://zendesk.jfrog.io/artifactory/repo'
+        }
+        maven { url 'https://www.jitpack.io' }
+        maven { url 'https://central.sonatype.com/repository/maven-snapshots/' }
+    }
+
+    tasks.withType(Exec).configureEach {
+        def systemPath = System.getenv("PATH") ?: ""
+        environment "PATH", "/usr/local/bin:/opt/homebrew/bin:" + systemPath
+    }
+
+    tasks.matching { it.name.contains("generateCodegenArtifactsFromSchema") }.configureEach {
+        doNotTrackState("Avoid missing codegen files hashing failure")
+    }
+}
+
+apply plugin: "com.facebook.react.rootproject"

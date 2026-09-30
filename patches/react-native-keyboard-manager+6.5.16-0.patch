@@ -1,0 +1,48 @@
+diff --git a/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/RCTBaseTextInputView+Hack.h b/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/RCTBaseTextInputView+Hack.h
+index 266e857..cbb5368 100644
+--- a/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/RCTBaseTextInputView+Hack.h
++++ b/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/RCTBaseTextInputView+Hack.h
+@@ -24,9 +24,11 @@
+ 
+ #import <React/RCTBaseTextInputView.h>
+ 
++#ifndef RCT_REMOVE_LEGACY_ARCH
+ @interface RCTBaseTextInputView (Hack)
+ 
+ - (void)setDefaultInputAccessoryView_avoid;
+ - (void)setDefaultInputAccessoryView_backup;
+ 
+ @end
++#endif
+diff --git a/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/RCTBaseTextInputView+Hack.m b/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/RCTBaseTextInputView+Hack.m
+index 14aad37..7b85737 100644
+--- a/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/RCTBaseTextInputView+Hack.m
++++ b/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/RCTBaseTextInputView+Hack.m
+@@ -24,6 +24,7 @@
+ 
+ #import "RCTBaseTextInputView+Hack.h"
+ 
++#ifndef RCT_REMOVE_LEGACY_ARCH
+ @implementation RCTBaseTextInputView (Hack)
+ 
+ - (void)setDefaultInputAccessoryView_avoid {
+@@ -40,3 +41,4 @@ - (void)setDefaultInputAccessoryView_backup {
+ }
+ 
+ @end
++#endif
+diff --git a/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/ReactNativeKeyboardManager.m b/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/ReactNativeKeyboardManager.m
+index 729de57..5295732 100644
+--- a/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/ReactNativeKeyboardManager.m
++++ b/node_modules/react-native-keyboard-manager/ios/ReactNativeKeyboardManager/ReactNativeKeyboardManager.m
+@@ -52,8 +52,10 @@ - (instancetype)init
+ {
+     self = [super init];
+     if (self) {
++#ifndef RCT_REMOVE_LEGACY_ARCH
+         Swizzle([RCTBaseTextInputView class], @selector(setDefaultInputAccessoryView_backup), @selector(setDefaultInputAccessoryView));
+         Swizzle([RCTBaseTextInputView class], @selector(setDefaultInputAccessoryView), @selector(setDefaultInputAccessoryView_avoid));
++#endif
+ 
+         // set LayoutIfNeededOnUpdate to YES to prevent problems with SateArea
+         // https://github.com/hackiftekhar/IQKeyboardManager/issues/1687#issuecomment-721618667

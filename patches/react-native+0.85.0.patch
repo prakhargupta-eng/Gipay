@@ -1,0 +1,28 @@
+diff --git a/node_modules/react-native/scripts/replace-rncore-version.js b/node_modules/react-native/scripts/replace-rncore-version.js
+index b2bcad5..99cfc65 100644
+--- a/node_modules/react-native/scripts/replace-rncore-version.js
++++ b/node_modules/react-native/scripts/replace-rncore-version.js
+@@ -42,12 +42,18 @@ function shouldReplaceRnCoreConfiguration(configuration /*: string */) {
+     }
+   }
+ 
+-  // Assumption: if there is no stored last build, we assume that it was build for debug.
++  // Verify if binary is actually debug if .last_build_configuration does not exist
+   if (!fileExists && configuration === 'Debug') {
+-    console.log(
+-      'No previous build detected, but Debug Configuration. No need to replace React-Core-prebuilt',
+-    );
+-    return false;
++    const binaryPath = 'React-Core-prebuilt/React.xcframework/ios-arm64/React.framework/React';
++    if (fs.existsSync(binaryPath)) {
++      const stats = fs.statSync(binaryPath);
++      if (stats.size > 30 * 1024 * 1024) {
++        console.log(
++          'No previous build detected, but Debug Configuration verified by binary size. No need to replace React-Core-prebuilt',
++        );
++        return false;
++      }
++    }
+   }
+ 
+   return true;
