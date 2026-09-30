@@ -54,14 +54,16 @@ jobs:
         run: |
           mkdir -p android/app
           echo "$KEYSTORE_BASE64" | tr -d '\n\r ' | base64 -d > android/app/gigpay-release-key.keystore
+          CLEAN_PASS=$(echo "$KEYSTORE_PASSWORD" | tr -d '\r\n"' | xargs)
+          CLEAN_ALIAS=$(echo "$KEY_ALIAS" | tr -d '\r\n"' | xargs)
           printf "storeFile=gigpay-release-key.keystore\nkeyAlias=%s\nstorePassword=%s\nkeyPassword=%s\n" \
-            "$KEY_ALIAS" "$KEYSTORE_PASSWORD" "${KEY_PASSWORD:-$KEYSTORE_PASSWORD}" > android/key.properties
+            "$CLEAN_ALIAS" "$CLEAN_PASS" "$CLEAN_PASS" > android/key.properties
           echo "MYAPP_UPLOAD_STORE_FILE=gigpay-release-key.keystore" >> $GITHUB_ENV
-          echo "MYAPP_UPLOAD_KEY_ALIAS=$KEY_ALIAS" >> $GITHUB_ENV
-          echo "MYAPP_UPLOAD_STORE_PASSWORD=$KEYSTORE_PASSWORD" >> $GITHUB_ENV
-          echo "MYAPP_UPLOAD_KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}" >> $GITHUB_ENV
+          echo "MYAPP_UPLOAD_KEY_ALIAS=$CLEAN_ALIAS" >> $GITHUB_ENV
+          echo "MYAPP_UPLOAD_STORE_PASSWORD=$CLEAN_PASS" >> $GITHUB_ENV
+          echo "MYAPP_UPLOAD_KEY_PASSWORD=$CLEAN_PASS" >> $GITHUB_ENV
           echo "Validating keystore with keytool..."
-          keytool -list -keystore android/app/gigpay-release-key.keystore -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS"
+          keytool -list -keystore android/app/gigpay-release-key.keystore -storepass "$CLEAN_PASS" -alias "$CLEAN_ALIAS"
 
       - name: Setup Firebase Service Account
         if: ${{ env.FIREBASE_SERVICE_ACCOUNT != '' }}

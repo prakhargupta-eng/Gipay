@@ -24,13 +24,15 @@ build-apk:
       KEYSTORE_DATA="${KEYSTORE_BASE64:-$ANDROID_KEYSTORE}"
       if [ -n "$KEYSTORE_DATA" ]; then
         mkdir -p android/app
-        echo "$KEYSTORE_DATA" | tr -d '\n\r' | base64 -d > android/app/gigpay-release-key.keystore
+        echo "$KEYSTORE_DATA" | tr -d '\n\r ' | base64 -d > android/app/gigpay-release-key.keystore
+        CLEAN_PASS=$(echo "$KEYSTORE_PASSWORD" | tr -d '\r\n"' | xargs)
+        CLEAN_ALIAS=$(echo "$KEY_ALIAS" | tr -d '\r\n"' | xargs)
         printf "storeFile=gigpay-release-key.keystore\nkeyAlias=%s\nstorePassword=%s\nkeyPassword=%s\n" \
-          "$KEY_ALIAS" "$KEYSTORE_PASSWORD" "${KEY_PASSWORD:-$KEYSTORE_PASSWORD}" > android/key.properties
+          "$CLEAN_ALIAS" "$CLEAN_PASS" "$CLEAN_PASS" > android/key.properties
         export MYAPP_UPLOAD_STORE_FILE="gigpay-release-key.keystore"
-        export MYAPP_UPLOAD_KEY_ALIAS="$KEY_ALIAS"
-        export MYAPP_UPLOAD_STORE_PASSWORD="$KEYSTORE_PASSWORD"
-        export MYAPP_UPLOAD_KEY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+        export MYAPP_UPLOAD_KEY_ALIAS="$CLEAN_ALIAS"
+        export MYAPP_UPLOAD_STORE_PASSWORD="$CLEAN_PASS"
+        export MYAPP_UPLOAD_KEY_PASSWORD="$CLEAN_PASS"
       fi
 
     # Recreate Firebase Service Account
