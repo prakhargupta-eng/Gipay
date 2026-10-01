@@ -38,6 +38,7 @@ local.properties
 !debug.keystore
 key.properties
 keystore.properties
+keystore_base64.txt
 .kotlin/
 
 # node.js
