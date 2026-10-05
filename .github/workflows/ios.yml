@@ -322,7 +322,7 @@ jobs:
       # 🚀 Upload to Firebase App Distribution
       - name: Upload to Firebase App Distribution
         env:
-          FIREBASE_APP_ID: ${{ secrets.FIREBASE_IOS_APP_ID || '1:638019750272:ios:455b523796f0fd35fb1965' }}
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_IOS_APP_ID }}
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
           IPA_PATH=$(find ios/build/outputs/ipa "$RUNNER_TEMP/export" -name "*.ipa" | head -n 1)
@@ -331,21 +331,43 @@ jobs:
             exit 1
           fi
           echo "Found IPA at: $IPA_PATH ($(ls -lh "$IPA_PATH" | awk '{print $5}'))"
-          echo "Firebase iOS App ID: $FIREBASE_APP_ID"
+
+          # 1. Resolve Firebase iOS App ID (prefer GoogleService-Info.plist if secret is invalid or has wrong format)
+          PLIST_APP_ID=$(/usr/libexec/PlistBuddy -c 'Print :GOOGLE_APP_ID' ios/GoogleService-Info.plist 2>/dev/null || echo "")
+          CLEAN_SECRET_APP_ID=$(echo "$FIREBASE_APP_ID" | tr -d '\r\n"' | xargs)
+
+          if [[ "$CLEAN_SECRET_APP_ID" =~ ^1:[0-9]+:ios:[a-f0-9]+$ ]]; then
+            TARGET_APP_ID="$CLEAN_SECRET_APP_ID"
+          elif [ -n "$PLIST_APP_ID" ]; then
+            TARGET_APP_ID="$PLIST_APP_ID"
+          else
+            TARGET_APP_ID="1:638019750272:ios:455b523796f0fd35fb1965"
+          fi
+
+          echo "Target Firebase iOS App ID: $TARGET_APP_ID"
 
           COMMIT_MSG="${{ github.event.head_commit.message || 'Manual iOS build triggered from GitHub Actions' }}"
 
           echo "Distributing to Firebase App Distribution group: test..."
-          if [ -n "$FIREBASE_TOKEN" ] && [ ! -s "$HOME/firebase-service-account.json" ]; then
+          if [ -s "$HOME/firebase-service-account.json" ]; then
+            echo "Authenticating using Firebase Service Account JSON..."
             firebase appdistribution:distribute "$IPA_PATH" \
-              --app "$FIREBASE_APP_ID" \
+              --app "$TARGET_APP_ID" \
+              --groups "test" \
+              --release-notes "$COMMIT_MSG" \
+              --debug
+          elif [ -n "$FIREBASE_TOKEN" ]; then
+            echo "Authenticating using Firebase Token..."
+            firebase appdistribution:distribute "$IPA_PATH" \
+              --app "$TARGET_APP_ID" \
               --groups "test" \
               --token "$FIREBASE_TOKEN" \
               --release-notes "$COMMIT_MSG" \
               --debug
           else
+            echo "Authenticating using default environment credentials..."
             firebase appdistribution:distribute "$IPA_PATH" \
-              --app "$FIREBASE_APP_ID" \
+              --app "$TARGET_APP_ID" \
               --groups "test" \
               --release-notes "$COMMIT_MSG" \
               --debug
