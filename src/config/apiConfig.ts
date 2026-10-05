@@ -13,23 +13,18 @@ export enum Environment {
 // 🔁 Change this to switch environment
 export const CURRENT_ENV: Environment = Environment.QA;
 
-// 🌍 Base URLs with robust fallbacks
-const BASE_URLS: Record<Environment, string> = {
-  [Environment.DEV]: Config.DEV_API_URL || 'http://192.168.1.150:2602/api/v1',
-  [Environment.staging]: Config.STAGING_API_URL || 'https://gigpay-v2-api-staging.octallabs.com/api/v1',
-  [Environment.QA]: Config.QA_API_URL || 'https://gigpay-v2-api-qa.octallabs.com/api/v1',
-  [Environment.UAT]: Config.UAT_API_URL || 'https://gigpay-v2-api-uat.octallabs.com/api/v1',
-  [Environment.PROD]: Config.PROD_API_URL || 'https://nonrural-unsetting-aurelia.ngrok-free.dev',
+// 🌍 Base URLs
+
+const BASE_URLS = {
+  [Environment.DEV]: Config.DEV_API_URL,
+  [Environment.staging]: Config.STAGING_API_URL,
+  [Environment.QA]: Config.QA_API_URL,
+  [Environment.UAT]: Config.UAT_API_URL,
+  [Environment.PROD]: Config.PROD_API_URL,
 };
 
 // ✅ Get Base URL
-export const getBaseUrl = (): string => {
-  const url = BASE_URLS[CURRENT_ENV];
-  if (!url) {
-    return 'https://gigpay-v2-api-qa.octallabs.com/api/v1';
-  }
-  return url;
-};
+export const getBaseUrl = (): string => BASE_URLS[CURRENT_ENV];
 
 // ⚡ Get Socket Server URL
 export const getSocketUrl = (): string => {

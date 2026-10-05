@@ -60,14 +60,21 @@ jobs:
       - name: Setup Environment Variables
         env:
           ENV_FILE: ${{ secrets.ENV_FILE }}
+          MAPS_KEY_SECRET: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
           if [ -n "$ENV_FILE" ]; then
             echo "$ENV_FILE" > .env
           else
+            MAPS_KEY="$MAPS_KEY_SECRET"
+            if [ -z "$MAPS_KEY" ]; then
+              MAPS_KEY=$(/usr/libexec/PlistBuddy -c 'Print :API_KEY' ios/GoogleService-Info.plist 2>/dev/null || echo "")
+            fi
+            export MAPS_KEY
             node -e '
               const fs = require("fs");
+              const mapsKey = process.env.MAPS_KEY || "";
               const env = [
-                "GOOGLE_MAPS_API_KEY=AIzaSyAOoL_n6auiWR4qVBNhruhwMC7Uh9HtuCs",
+                `GOOGLE_MAPS_API_KEY=${mapsKey}`,
                 "ZENDESK_URL=https://octalitsolution-52917.zendesk.com",
                 "ZENDESK_APP_ID=c8080e4b13f564e3f2cf4cc28ee96920f17ac4c64dfba3aa",
                 "ZENDESK_CLIENT_ID=mobile_sdk_client_6b7a8ab09b1a978a6e2b",
