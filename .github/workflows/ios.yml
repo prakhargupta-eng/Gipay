@@ -149,10 +149,14 @@ jobs:
           PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' /dev/stdin <<< $(security cms -D -i "$PP_PATH"))
           TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' /dev/stdin <<< $(security cms -D -i "$PP_PATH"))
           
-          # Detect method (ad-hoc if devices are present, otherwise app-store)
-          DETECTED_METHOD="app-store"
-          if /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' /dev/stdin <<< $(security cms -D -i "$PP_PATH") > /dev/null 2>&1; then
+          # Detect method: development (if get-task-allow=true), ad-hoc (if devices present), or app-store
+          GET_TASK_ALLOW=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' /dev/stdin <<< $(security cms -D -i "$PP_PATH") 2>/dev/null || echo "false")
+          if [ "$GET_TASK_ALLOW" = "true" ]; then
+            DETECTED_METHOD="development"
+          elif /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' /dev/stdin <<< $(security cms -D -i "$PP_PATH") > /dev/null 2>&1; then
             DETECTED_METHOD="ad-hoc"
+          else
+            DETECTED_METHOD="app-store"
           fi
           EXPORT_METHOD="${{ github.event.inputs.export_method || '' }}"
           if [ -z "$EXPORT_METHOD" ]; then
@@ -177,7 +181,7 @@ jobs:
           fi
           echo "Found Signing Identity: $SIGNING_IDENTITY"
 
-          # 7. Create ExportOptions.plist
+          # 7. Create ExportOptions.plist (omitting signingCertificate lets Xcode match from the profile automatically)
           mkdir -p "$RUNNER_TEMP/export"
           cat <<EOF > "$RUNNER_TEMP/ExportOptions.plist"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -190,8 +194,6 @@ jobs:
     <string>$TEAM_ID</string>
     <key>signingStyle</key>
     <string>manual</string>
-    <key>signingCertificate</key>
-    <string>$SIGNING_IDENTITY</string>
     <key>provisioningProfiles</key>
     <dict>
         <key>com.octal.james.gigPay</key>
@@ -213,6 +215,25 @@ EOF
           echo "TEAM_ID=$TEAM_ID" >> $GITHUB_ENV
           echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> $GITHUB_ENV
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
+
+      # 🛡️ Prevent CocoaPods Frameworks from inheriting provisioning profiles
+      - name: Disable Signing for CocoaPods Frameworks
+        run: |
+          bundle exec ruby -e "
+            require 'xcodeproj'
+            if File.exist?('ios/Pods/Pods.xcodeproj')
+              pods_project = Xcodeproj::Project.open('ios/Pods/Pods.xcodeproj')
+              pods_project.targets.each do |target|
+                target.build_configurations.each do |config|
+                  config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+                  config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+                  config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
+                end
+              end
+              pods_project.save
+              puts 'Successfully disabled code signing on CocoaPods framework targets'
+            end
+          " || echo "Warning: Pods.xcodeproj not modified"
 
       # 📦 Build Archive
       - name: Build Archive (xcodebuild archive)
