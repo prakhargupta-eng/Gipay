@@ -1,0 +1,293 @@
+name: Build & Distribute iOS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      export_method:
+        description: 'Export method (ad-hoc for Firebase, app-store for TestFlight)'
+        required: false
+        default: 'ad-hoc'
+        type: choice
+        options:
+          - ad-hoc
+          - app-store
+          - development
+          - enterprise
+
+jobs:
+  build-ios:
+    name: Build & Distribute iOS App
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode Version
+        run: |
+          echo "Available Xcode versions:"
+          ls -d /Applications/Xcode* || true
+          if [ -d "/Applications/Xcode_16.2.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.2.app
+          elif [ -d "/Applications/Xcode_16.1.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.1.app
+          elif [ -d "/Applications/Xcode_16.0.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.0.app
+          elif [ -d "/Applications/Xcode_15.4.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_15.4.app
+          fi
+          xcodebuild -version
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'yarn'
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Install Node Dependencies
+        run: yarn install --ignore-engines
+
+      - name: Setup Environment Variables
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          if [ -n "$ENV_FILE" ]; then
+            echo "$ENV_FILE" > .env
+          else
+            touch .env
+            echo "ENV=production" >> .env
+            echo "GOOGLE_MAPS_API_KEY=dummy_key_for_ci" >> .env
+          fi
+          bundle exec ruby update_xcode.rb || ruby update_xcode.rb
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: ios/Pods
+          key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-
+
+      - name: Install CocoaPods
+        working-directory: ios
+        run: |
+          bundle exec pod install || pod install --repo-update
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      # 🔐 Firebase Auth — Handle raw JSON or Base64 service account (reused from Android)
+      - name: Setup Firebase Auth
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          mkdir -p "$HOME/.firebase"
+          if echo "$SERVICE_ACCOUNT" | tr -d '\r\n' | base64 -d > /dev/null 2>&1 && [[ ! "$SERVICE_ACCOUNT" =~ "{" ]]; then
+            echo "$SERVICE_ACCOUNT" | tr -d '\r\n' | base64 -d > "$HOME/firebase-service-account.json"
+          else
+            echo "$SERVICE_ACCOUNT" > "$HOME/firebase-service-account.json"
+          fi
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$HOME/firebase-service-account.json" >> $GITHUB_ENV
+
+      # 🔐 Configure Apple Keychain, Certificates & Provisioning Profile
+      - name: Install Apple Certificate and Provisioning Profile
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.IOS_BUILD_CERTIFICATE_BASE64 || secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD || secrets.P12_PASSWORD || secrets.IOS_KEYCHAIN_SECRET || '' }}
+          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 || secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD || secrets.KEYCHAIN_PASSWORD || secrets.IOS_KEYCHAIN_SECRET || 'gigpay_temporary_keychain_pass_123' }}
+        run: |
+          if [ -z "$BUILD_CERTIFICATE_BASE64" ]; then
+            echo "❌ ERROR: Secret IOS_BUILD_CERTIFICATE_BASE64 is missing!"
+            exit 1
+          fi
+          if [ -z "$BUILD_PROVISION_PROFILE_BASE64" ]; then
+            echo "❌ ERROR: Secret IOS_PROVISION_PROFILE_BASE64 is missing!"
+            exit 1
+          fi
+
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # 1. Decode certificate (supports gzipped or plain base64)
+          if echo "$BUILD_CERTIFICATE_BASE64" | tr -d '\r\n ' | base64 --decode | gzip -t >/dev/null 2>&1; then
+            echo "$BUILD_CERTIFICATE_BASE64" | tr -d '\r\n ' | base64 --decode | gzip -d > "$CERTIFICATE_PATH"
+          else
+            echo "$BUILD_CERTIFICATE_BASE64" | tr -d '\r\n ' | base64 --decode > "$CERTIFICATE_PATH"
+          fi
+
+          # Decode provisioning profile (supports gzipped or plain base64)
+          if echo "$BUILD_PROVISION_PROFILE_BASE64" | tr -d '\r\n ' | base64 --decode | gzip -t >/dev/null 2>&1; then
+            echo "$BUILD_PROVISION_PROFILE_BASE64" | tr -d '\r\n ' | base64 --decode | gzip -d > "$PP_PATH"
+          else
+            echo "$BUILD_PROVISION_PROFILE_BASE64" | tr -d '\r\n ' | base64 --decode > "$PP_PATH"
+          fi
+
+          # 2. Create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # 3. Import certificate to keychain
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+          # 4. Extract Provisioning Profile details using PlistBuddy
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' /dev/stdin <<< $(security cms -D -i "$PP_PATH"))
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' /dev/stdin <<< $(security cms -D -i "$PP_PATH"))
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' /dev/stdin <<< $(security cms -D -i "$PP_PATH"))
+          
+          # Detect method (ad-hoc if devices are present, otherwise app-store)
+          DETECTED_METHOD="app-store"
+          if /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' /dev/stdin <<< $(security cms -D -i "$PP_PATH") > /dev/null 2>&1; then
+            DETECTED_METHOD="ad-hoc"
+          fi
+          EXPORT_METHOD="${{ github.event.inputs.export_method || '' }}"
+          if [ -z "$EXPORT_METHOD" ]; then
+            EXPORT_METHOD="$DETECTED_METHOD"
+          fi
+
+          echo "Detected Profile UUID: $PROFILE_UUID"
+          echo "Detected Profile Name: $PROFILE_NAME"
+          echo "Detected Team ID: $TEAM_ID"
+          echo "Selected Export Method: $EXPORT_METHOD"
+
+          # 5. Install Provisioning Profile to system directory
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PP_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          cp "$PP_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_NAME.mobileprovision" 2>/dev/null || true
+
+          # 6. Extract exact signing identity from keychain
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -o '".*"' | tr -d '"' | head -n 1)
+          if [ -z "$SIGNING_IDENTITY" ]; then
+            echo "❌ ERROR: No valid code signing identity found in certificate!"
+            exit 1
+          fi
+          echo "Found Signing Identity: $SIGNING_IDENTITY"
+
+          # 7. Create ExportOptions.plist
+          mkdir -p "$RUNNER_TEMP/export"
+          cat <<EOF > "$RUNNER_TEMP/ExportOptions.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>$EXPORT_METHOD</string>
+    <key>teamID</key>
+    <string>$TEAM_ID</string>
+    <key>signingStyle</key>
+    <string>manual</string>
+    <key>signingCertificate</key>
+    <string>$SIGNING_IDENTITY</string>
+    <key>provisioningProfiles</key>
+    <dict>
+        <key>com.octal.james.gigPay</key>
+        <string>$PROFILE_UUID</string>
+    </dict>
+    <key>destination</key>
+    <string>export</string>
+    <key>compileBitcode</key>
+    <false/>
+    <key>stripSwiftSymbols</key>
+    <true/>
+</dict>
+</plist>
+EOF
+          cat "$RUNNER_TEMP/ExportOptions.plist"
+
+          # Export variables for subsequent build steps
+          echo "PROFILE_UUID=$PROFILE_UUID" >> $GITHUB_ENV
+          echo "TEAM_ID=$TEAM_ID" >> $GITHUB_ENV
+          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> $GITHUB_ENV
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
+
+      # 📦 Build Archive
+      - name: Build Archive (xcodebuild archive)
+        run: |
+          mkdir -p build
+          xcodebuild archive \
+            -workspace ios/GigPay.xcworkspace \
+            -scheme GigPay \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/GigPay.xcarchive" \
+            -destination "generic/platform=iOS" \
+            CODE_SIGN_STYLE="Manual" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
+            CODE_SIGN_IDENTITY="$SIGNING_IDENTITY"
+
+      # 📦 Export IPA
+      - name: Export IPA (xcodebuild -exportArchive)
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/GigPay.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -allowProvisioningUpdates
+
+          mkdir -p ios/build/outputs/ipa
+          cp "$RUNNER_TEMP/export/"*.ipa ios/build/outputs/ipa/GigPay.ipa
+          echo "Generated IPA:"
+          ls -lh ios/build/outputs/ipa/
+
+      # 💾 Save IPA as GitHub Artifact
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GigPay-iOS-Release-IPA
+          path: ios/build/outputs/ipa/*.ipa
+          retention-days: 7
+
+      # 🚀 Upload to Firebase App Distribution
+      - name: Upload to Firebase App Distribution
+        env:
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_IOS_APP_ID || '1:638019750272:ios:455b523796f0fd35fb1965' }}
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          IPA_PATH=$(find ios/build/outputs/ipa -name "*.ipa" | head -n 1)
+          if [ -z "$IPA_PATH" ]; then
+            echo "❌ ERROR: No IPA file found to distribute!"
+            exit 1
+          fi
+          echo "Distributing IPA: $IPA_PATH"
+          echo "Firebase iOS App ID: $FIREBASE_APP_ID"
+
+          COMMIT_MSG="${{ github.event.head_commit.message || 'Manual iOS build triggered from GitHub Actions' }}"
+
+          if [ -n "$FIREBASE_TOKEN" ] && [ ! -s "$HOME/firebase-service-account.json" ]; then
+            firebase appdistribution:distribute "$IPA_PATH" \
+              --app "$FIREBASE_APP_ID" \
+              --groups "test" \
+              --token "$FIREBASE_TOKEN" \
+              --release-notes "$COMMIT_MSG" \
+              --debug
+          else
+            firebase appdistribution:distribute "$IPA_PATH" \
+              --app "$FIREBASE_APP_ID" \
+              --groups "test" \
+              --release-notes "$COMMIT_MSG" \
+              --debug
+          fi
+
+      # 🧹 Cleanup Keychain and Profiles
+      - name: Clean up Keychain and Provisioning Profiles
+        if: always()
+        run: |
+          if [ -n "$KEYCHAIN_PATH" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          fi
+          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision 2>/dev/null || true
+          rm -f "$HOME/firebase-service-account.json" 2>/dev/null || true
