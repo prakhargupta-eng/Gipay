@@ -163,9 +163,13 @@ jobs:
             EXPORT_METHOD="$DETECTED_METHOD"
           fi
 
+          # Detect if profile is Xcode managed
+          IS_XCODE_MANAGED=$(/usr/libexec/PlistBuddy -c 'Print :IsXcodeManaged' /dev/stdin <<< $(security cms -D -i "$PP_PATH") 2>/dev/null || echo "false")
+
           echo "Detected Profile UUID: $PROFILE_UUID"
           echo "Detected Profile Name: $PROFILE_NAME"
           echo "Detected Team ID: $TEAM_ID"
+          echo "Detected IsXcodeManaged: $IS_XCODE_MANAGED"
           echo "Selected Export Method: $EXPORT_METHOD"
 
           # 5. Install Provisioning Profile to system directory
@@ -185,7 +189,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/export"
           node -e '
             const fs = require("fs");
-            const xml = [
+            const isManaged = process.env.IS_XCODE_MANAGED === "true";
+            const signingStyle = isManaged ? "automatic" : "manual";
+            const lines = [
               "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
               "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
               "<plist version=\"1.0\">",
@@ -195,12 +201,20 @@ jobs:
               "    <key>teamID</key>",
               `    <string>${process.env.TEAM_ID}</string>`,
               "    <key>signingStyle</key>",
-              "    <string>manual</string>",
-              "    <key>provisioningProfiles</key>",
-              "    <dict>",
-              "        <key>com.octal.james.gigPay</key>",
-              `        <string>${process.env.PROFILE_UUID}</string>`,
-              "    </dict>",
+              `    <string>${signingStyle}</string>`
+            ];
+
+            if (!isManaged) {
+              lines.push(
+                "    <key>provisioningProfiles</key>",
+                "    <dict>",
+                "        <key>com.octal.james.gigPay</key>",
+                `        <string>${process.env.PROFILE_UUID}</string>`,
+                "    </dict>"
+              );
+            }
+
+            lines.push(
               "    <key>destination</key>",
               "    <string>export</string>",
               "    <key>compileBitcode</key>",
@@ -209,8 +223,8 @@ jobs:
               "    <true/>",
               "</dict>",
               "</plist>"
-            ].join("\n");
-            fs.writeFileSync(process.env.RUNNER_TEMP + "/ExportOptions.plist", xml);
+            );
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/ExportOptions.plist", lines.join("\n"));
             console.log("ExportOptions.plist created successfully");
           '
           cat "$RUNNER_TEMP/ExportOptions.plist"
@@ -218,6 +232,7 @@ jobs:
           # Export variables for subsequent build steps
           echo "PROFILE_UUID=$PROFILE_UUID" >> $GITHUB_ENV
           echo "TEAM_ID=$TEAM_ID" >> $GITHUB_ENV
+          echo "IS_XCODE_MANAGED=$IS_XCODE_MANAGED" >> $GITHUB_ENV
           echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> $GITHUB_ENV
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
 
@@ -244,16 +259,28 @@ jobs:
       - name: Build Archive (xcodebuild archive)
         run: |
           mkdir -p build
-          xcodebuild archive \
-            -workspace ios/GigPay.xcworkspace \
-            -scheme GigPay \
-            -configuration Release \
-            -archivePath "$RUNNER_TEMP/GigPay.xcarchive" \
-            -destination "generic/platform=iOS" \
-            CODE_SIGN_STYLE="Manual" \
-            DEVELOPMENT_TEAM="$TEAM_ID" \
-            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
-            CODE_SIGN_IDENTITY="$SIGNING_IDENTITY"
+          if [ "$IS_XCODE_MANAGED" = "true" ]; then
+            echo "Profile is Xcode-managed. Archiving with Automatic signing..."
+            xcodebuild archive \
+              -workspace ios/GigPay.xcworkspace \
+              -scheme GigPay \
+              -configuration Release \
+              -archivePath "$RUNNER_TEMP/GigPay.xcarchive" \
+              -destination "generic/platform=iOS" \
+              DEVELOPMENT_TEAM="$TEAM_ID"
+          else
+            echo "Profile is manually managed. Archiving with Manual signing..."
+            xcodebuild archive \
+              -workspace ios/GigPay.xcworkspace \
+              -scheme GigPay \
+              -configuration Release \
+              -archivePath "$RUNNER_TEMP/GigPay.xcarchive" \
+              -destination "generic/platform=iOS" \
+              CODE_SIGN_STYLE="Manual" \
+              DEVELOPMENT_TEAM="$TEAM_ID" \
+              PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
+              CODE_SIGN_IDENTITY="$SIGNING_IDENTITY"
+          fi
 
       # 📦 Export IPA
       - name: Export IPA (xcodebuild -exportArchive)
@@ -266,7 +293,7 @@ jobs:
 
           mkdir -p ios/build/outputs/ipa
           cp "$RUNNER_TEMP/export/"*.ipa ios/build/outputs/ipa/GigPay.ipa
-          echo "Generated IPA:"
+          echo "Generated IPA successfully at: ios/build/outputs/ipa/GigPay.ipa"
           ls -lh ios/build/outputs/ipa/
 
       # 💾 Save IPA as GitHub Artifact
@@ -283,16 +310,17 @@ jobs:
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_IOS_APP_ID || '1:638019750272:ios:455b523796f0fd35fb1965' }}
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
-          IPA_PATH=$(find ios/build/outputs/ipa -name "*.ipa" | head -n 1)
+          IPA_PATH=$(find ios/build/outputs/ipa "$RUNNER_TEMP/export" -name "*.ipa" | head -n 1)
           if [ -z "$IPA_PATH" ]; then
             echo "❌ ERROR: No IPA file found to distribute!"
             exit 1
           fi
-          echo "Distributing IPA: $IPA_PATH"
+          echo "Found IPA at: $IPA_PATH ($(ls -lh "$IPA_PATH" | awk '{print $5}'))"
           echo "Firebase iOS App ID: $FIREBASE_APP_ID"
 
           COMMIT_MSG="${{ github.event.head_commit.message || 'Manual iOS build triggered from GitHub Actions' }}"
 
+          echo "Distributing to Firebase App Distribution group: test..."
           if [ -n "$FIREBASE_TOKEN" ] && [ ! -s "$HOME/firebase-service-account.json" ]; then
             firebase appdistribution:distribute "$IPA_PATH" \
               --app "$FIREBASE_APP_ID" \
@@ -307,6 +335,7 @@ jobs:
               --release-notes "$COMMIT_MSG" \
               --debug
           fi
+          echo "🎉 Successfully uploaded and distributed iOS IPA to Firebase!"
 
       # 🧹 Cleanup Keychain and Profiles
       - name: Clean up Keychain and Provisioning Profiles
