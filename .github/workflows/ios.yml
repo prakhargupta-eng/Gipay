@@ -185,10 +185,32 @@ jobs:
           fi
           echo "Found Signing Identity: $SIGNING_IDENTITY"
 
+          # Export shell variables to process.env for Node.js and subsequent workflow steps
+          export PROFILE_UUID
+          export PROFILE_NAME
+          export TEAM_ID
+          export IS_XCODE_MANAGED
+          export EXPORT_METHOD
+          export SIGNING_IDENTITY
+          export KEYCHAIN_PATH
+
+          echo "PROFILE_UUID=$PROFILE_UUID" >> $GITHUB_ENV
+          echo "TEAM_ID=$TEAM_ID" >> $GITHUB_ENV
+          echo "IS_XCODE_MANAGED=$IS_XCODE_MANAGED" >> $GITHUB_ENV
+          echo "EXPORT_METHOD=$EXPORT_METHOD" >> $GITHUB_ENV
+          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> $GITHUB_ENV
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
+
           # 7. Create ExportOptions.plist using Node.js
           mkdir -p "$RUNNER_TEMP/export"
           node -e '
             const fs = require("fs");
+            let method = process.env.EXPORT_METHOD || "development";
+            // Map to Xcode 16 supported values: app-store-connect, release-testing, enterprise, debugging
+            if (method === "ad-hoc") method = "release-testing";
+            else if (method === "development") method = "debugging";
+            else if (method === "app-store") method = "app-store-connect";
+
             const isManaged = process.env.IS_XCODE_MANAGED === "true";
             const signingStyle = isManaged ? "automatic" : "manual";
             const lines = [
@@ -197,7 +219,7 @@ jobs:
               "<plist version=\"1.0\">",
               "<dict>",
               "    <key>method</key>",
-              `    <string>${process.env.EXPORT_METHOD}</string>`,
+              `    <string>${method}</string>`,
               "    <key>teamID</key>",
               `    <string>${process.env.TEAM_ID}</string>`,
               "    <key>signingStyle</key>",
@@ -225,16 +247,9 @@ jobs:
               "</plist>"
             );
             fs.writeFileSync(process.env.RUNNER_TEMP + "/ExportOptions.plist", lines.join("\n"));
-            console.log("ExportOptions.plist created successfully");
+            console.log("ExportOptions.plist created successfully with method: " + method);
           '
           cat "$RUNNER_TEMP/ExportOptions.plist"
-
-          # Export variables for subsequent build steps
-          echo "PROFILE_UUID=$PROFILE_UUID" >> $GITHUB_ENV
-          echo "TEAM_ID=$TEAM_ID" >> $GITHUB_ENV
-          echo "IS_XCODE_MANAGED=$IS_XCODE_MANAGED" >> $GITHUB_ENV
-          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> $GITHUB_ENV
-          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
 
       # 🛡️ Prevent CocoaPods Frameworks from inheriting provisioning profiles
       - name: Disable Signing for CocoaPods Frameworks
