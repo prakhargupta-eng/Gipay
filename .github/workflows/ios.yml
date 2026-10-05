@@ -181,33 +181,38 @@ jobs:
           fi
           echo "Found Signing Identity: $SIGNING_IDENTITY"
 
-          # 7. Create ExportOptions.plist (omitting signingCertificate lets Xcode match from the profile automatically)
+          # 7. Create ExportOptions.plist using Node.js
           mkdir -p "$RUNNER_TEMP/export"
-          cat <<EOF > "$RUNNER_TEMP/ExportOptions.plist"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>method</key>
-    <string>$EXPORT_METHOD</string>
-    <key>teamID</key>
-    <string>$TEAM_ID</string>
-    <key>signingStyle</key>
-    <string>manual</string>
-    <key>provisioningProfiles</key>
-    <dict>
-        <key>com.octal.james.gigPay</key>
-        <string>$PROFILE_UUID</string>
-    </dict>
-    <key>destination</key>
-    <string>export</string>
-    <key>compileBitcode</key>
-    <false/>
-    <key>stripSwiftSymbols</key>
-    <true/>
-</dict>
-</plist>
-EOF
+          node -e '
+            const fs = require("fs");
+            const xml = [
+              "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+              "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+              "<plist version=\"1.0\">",
+              "<dict>",
+              "    <key>method</key>",
+              `    <string>${process.env.EXPORT_METHOD}</string>`,
+              "    <key>teamID</key>",
+              `    <string>${process.env.TEAM_ID}</string>`,
+              "    <key>signingStyle</key>",
+              "    <string>manual</string>",
+              "    <key>provisioningProfiles</key>",
+              "    <dict>",
+              "        <key>com.octal.james.gigPay</key>",
+              `        <string>${process.env.PROFILE_UUID}</string>`,
+              "    </dict>",
+              "    <key>destination</key>",
+              "    <string>export</string>",
+              "    <key>compileBitcode</key>",
+              "    <false/>",
+              "    <key>stripSwiftSymbols</key>",
+              "    <true/>",
+              "</dict>",
+              "</plist>"
+            ].join("\n");
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/ExportOptions.plist", xml);
+            console.log("ExportOptions.plist created successfully");
+          '
           cat "$RUNNER_TEMP/ExportOptions.plist"
 
           # Export variables for subsequent build steps
