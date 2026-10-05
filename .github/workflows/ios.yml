@@ -64,9 +64,25 @@ jobs:
           if [ -n "$ENV_FILE" ]; then
             echo "$ENV_FILE" > .env
           else
-            touch .env
-            echo "ENV=production" >> .env
-            echo "GOOGLE_MAPS_API_KEY=dummy_key_for_ci" >> .env
+            node -e '
+              const fs = require("fs");
+              const env = [
+                "GOOGLE_MAPS_API_KEY=AIzaSyAOoL_n6auiWR4qVBNhruhwMC7Uh9HtuCs",
+                "ZENDESK_URL=https://octalitsolution-52917.zendesk.com",
+                "ZENDESK_APP_ID=c8080e4b13f564e3f2cf4cc28ee96920f17ac4c64dfba3aa",
+                "ZENDESK_CLIENT_ID=mobile_sdk_client_6b7a8ab09b1a978a6e2b",
+                "GOOGLE_PACKAGE_NAME=com.gigpay",
+                "APPLE_APP_ID=1616790451",
+                "RSA_PUBLIC_KEY=\"-----BEGIN PUBLIC KEY-----\\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx3VhRwbjEFr3/GA2H3Ro\\nBS3hAXtYEpkwzNAT8Y8OgZcG20vUcOeJ8AAthtSBcK3pfxeMO/C5oNj1RQN9A0hn\\nN04lnjHx2vkgMw8KjVKDFTnvxW4xJGXp33JNqSOKHxV+MznE6mM8Z9ngYOM4p5kF\\nEE/6MEMBOe/44VMF+5K0rlKTQiog/YQz3JoxxYNQjU1NsJPg8N198EJC7oo8zRza\\n1ACnbZ/UhaDbyafsgqcmga5SzCCY2fuogsCwKybcrLnFRPtlt020F1fMjrptneFJ\\nbgnW6aLx0fBecLDUiVtWBvKcveOgV0OvmQ0uKDIS+yuFnMw36DIxtVMzKYUaL0dH\\nqQIDAQAB\\n-----END PUBLIC KEY-----\"",
+                "DEV_API_URL=http://192.168.1.150:2602/api/v1",
+                "STAGING_API_URL=https://gigpay-v2-api-staging.octallabs.com/api/v1",
+                "QA_API_URL=https://gigpay-v2-api-qa.octallabs.com/api/v1",
+                "UAT_API_URL=https://gigpay-v2-api-uat.octallabs.com/api/v1",
+                "PROD_API_URL=https://nonrural-unsetting-aurelia.ngrok-free.dev"
+              ].join("\n");
+              fs.writeFileSync(".env", env);
+              console.log(".env generated with full default configuration");
+            '
           fi
           bundle exec ruby update_xcode.rb || ruby update_xcode.rb
 
